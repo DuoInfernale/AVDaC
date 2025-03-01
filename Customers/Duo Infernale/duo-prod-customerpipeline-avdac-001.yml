@@ -1,0 +1,181 @@
+##### ---------------------- HEADER ---------------------- #####
+
+# Customer Azure DevOps Pipeline for Deploying Resources
+# This pipeline triggers the main deployment pipeline defined for Azure resources using Bicep templates.
+
+# Authors: Michele Blum & Flavio Meyer
+# Creation date: 01.03.2025
+
+##### ---------------------- HEADER END ---------------------- #####
+
+
+##### ---------------------- CHANGELOG ---------------------- #####
+
+# Version: 1.0.0
+# Date: 01.03.2025
+
+# Changes: 
+# - Initial version
+
+##### ---------------------- CHANGELOG END ---------------------- #####
+
+
+##### ---------------------- TRIGGER ---------------------- #####
+
+# Disable automatic triggers for this pipeline
+trigger: none
+
+##### ---------------------- TRIGGER END ---------------------- #####
+
+
+##### ---------------------- POOL ---------------------- #####
+
+# Define the pool to use for the pipeline
+pool:
+  vmImage: "ubuntu-latest"
+
+##### ---------------------- POOL END ---------------------- #####
+
+
+##### ---------------------- VARIABLES ---------------------- #####
+
+# Define variables for the pipeline
+variables:
+  serviceConnection: "duo-sc-devops-avdac-dev-001"
+  location: "switzerlandnorth"
+  templateFile: "_Bicep/_Templates/main.bicep"
+
+##### ---------------------- VARIABLES END ---------------------- #####
+
+
+##### ---------------------- PARAMETERS ---------------------- #####
+
+# Define parameters for the pipeline
+parameters:
+  - name: customerAbbreviation
+    displayName: "Customer Abbreviation (3 characters max, no special characters and no capital letters)"
+    type: string
+  - name: environment
+    displayName: "Environment for Resource Deployment (e.g., Production, Test, Development)"
+    type: string
+    default: prod
+    values:
+      - "prod"
+      - "test"
+      - "dev"
+  - name: location
+    displayName: "Deployment Location for Resources (e.g., Switzerland North, West Europe, etc.)"
+    type: string
+    default: "switzerlandnorth"
+    values:
+      - "switzerlandnorth"
+      - "westeurope"
+      - "northeurope"
+      - "swedencentral"
+      - "uksouth"
+      - "francecentral"
+      - "germanywestcentral"
+      - "italynorth"
+      - "norwayeast"
+      - "polandcentral"
+      - "spaincentral"
+      - "germanynorth"
+      - "norwaywest"
+      - "switzerlandwest"
+      - "ukwest"
+  - name: locationAVD
+    displayName: "Location for Azure Virtual Desktop Metadata Deployment (e.g., West Europe, North Europe etc.)"
+    type: string
+    default: "westeurope"
+    values:
+      - "westeurope"
+      - "northeurope"
+      - "uksouth"
+      - "francecentral"
+      - "germanywestcentral"
+      - "swedencentral"
+  - name: vdwsName
+    displayName: "Virtual Desktop Workspace Name (e.g., DuoInfernaleVDWS or DuoInfernaleVDWS-Prod; NO SPACES ALLOWED)"
+    type: string
+  - name: networkId
+    displayName: "Network ID (CIDR format, should be /20)"
+    type: string
+    default: "10.100.0.0/20"
+  - name: privateDNSName
+    displayName: "Private DNS Zone Name (e.g., int.duo-infernale.ch)"
+    type: string
+  - name: fsshareQuota
+    displayName: "File Share Storage Quota (in GB, minimum 100 GB, Suggestion: User x 30 GB = Total)"
+    type: number
+    default: "300"
+  - name: vmCount
+    displayName: "Number of Virtual Machines to Deploy"
+    type: number
+    default: "2"
+  - name: vmSize
+    displayName: "Size of Virtual Machines (e.g., Standard D2s v6)"
+    type: string
+    default: "Standard_D2s_v6"
+    values:
+      - "Standard_D2s_v6"
+      - "Standard_D4s_v6"
+      - "Standard_D8s_v6"
+      - "Standard_D16s_v6"
+      - "Standard_D32s_v6"
+      - "Standard_D64s_v6"
+      - "Standard_D96s_v6"
+      - "Standard_D2as_v5"
+      - "Standard_D4as_v6"
+      - "Standard_D8as_v6"
+      - "Standard_D16as_v6"
+      - "Standard_D32as_v6"
+      - "Standard_D64as_v6"
+      - "Standard_D96as_v6"
+  - name: tags
+    displayName: "Resource Tags (Key:Value pairs for organization, e.g., 'Owner: John Doe <ENTER> Department: IT')"
+    type: object
+  - name: localadminName
+    displayName: "Local Administrator Username for Virtual Machines"
+    type: string
+  - name: localadminPassword
+    displayName: "Local Administrator Password for Virtual Machines"
+    type: string
+  - name: rbacObjectIdFullDesktopUsers
+    displayName: "Object ID for Full Desktop Users RBAC Group"
+    type: string
+  - name: rbacObjectIdRBACAVDAdmin
+    displayName: "Object ID for AVD Admins RBAC Group"
+    type: string
+  - name: rbacObjectIdRBACAVDUsers
+    displayName: "Object ID for AVD Users RBAC Group"
+    type: string
+
+##### ---------------------- PARAMETERS END ---------------------- #####
+
+
+##### ---------------------- STAGES ---------------------- #####
+
+# Include the static pipeline as a template
+stages:
+  - template: /_Pipelines\_Templates\AVD\Full landing zone\Entra ID authentication only\Pooled session hosts\tmpl-prod-mainpipeline-avdac-001.yml
+    parameters:
+      customerAbbreviation: ${{ parameters.customerAbbreviation }}
+      environment: ${{ parameters.environment }}
+      location: ${{ parameters.location }}
+      locationAVD: ${{ parameters.locationAVD }}
+      vdwsName: ${{ parameters.vdwsName }}
+      tags: ${{ parameters.tags }}
+      networkId: ${{ parameters.networkId }}
+      fsshareQuota: ${{ parameters.fsshareQuota }}
+      vmCount: ${{ parameters.vmCount }}
+      vmSize: ${{ parameters.vmSize }}
+      privateDNSName: ${{ parameters.privateDNSName }}
+      localadminName: ${{ parameters.localadminName }}
+      localadminPassword: ${{ parameters.localadminPassword }}
+      rbacObjectIdFullDesktopUsers: ${{ parameters.rbacObjectIdFullDesktopUsers }}
+      rbacObjectIdRBACAVDAdmin: ${{ parameters.rbacObjectIdRBACAVDAdmin }}
+      rbacObjectIdRBACAVDUsers: ${{ parameters.rbacObjectIdRBACAVDUsers }}
+      serviceConnection: $(serviceConnection)
+      templateFile: $(templateFile)
+
+##### ---------------------- STAGES END ---------------------- #####

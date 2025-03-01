@@ -1,0 +1,150 @@
+##### ---------------------- HEADER ---------------------- #####
+
+# Azure DevOps Pipeline for Deploying Azure Resources with Bicep Templates.
+  # This pipeline automates the process of validating, previewing, and deploying via Azure CLI and Azure Bicep.
+  # Azure resources defined in a Bicep template. It includes stages for linting, validation, previewing changes, and final deployment.
+
+# Authors: Michele Blum & Flavio Meyer
+
+# Creation date: 01.03.2025
+
+##### ---------------------- HEADER END ---------------------- #####
+
+
+##### ---------------------- CHANGELOG ---------------------- #####
+
+# Version: 1.0.0
+# Date: 01.03.2025
+
+# Changes:
+# - Initial version
+
+##### ---------------------- CHANGELOG END ---------------------- #####
+
+
+##### ---------------------- PARAMETERS ---------------------- #####
+
+# Define parameters for the pipeline.
+  # Parameters are used to pass values to the pipeline when it is run.
+
+parameters:
+  - name: customerAbbreviation          # Abbreviation for the customer
+    type: string
+  - name: environment                   # Specifies the environment (e.g., Dev, Test, Prod)
+    type: string
+  - name: location                      # Azure region/location for deployment
+    type: string
+  - name: locationAVD                   # Location for Azure Virtual Desktop
+    type: string
+  - name: vdwsName                      # Name for the Virtual Desktop Workspace
+    type: string
+  - name: tags                          # Tags to categorize resources
+    type: object
+  - name: networkId                     # ID of the network where resources will be deployed
+    type: string
+  - name: fsshareQuota                  # File share quota for the Azure resources
+    type: number
+  - name: vmCount                       # Number of virtual machines to deploy
+    type: number
+  - name: vmSize                        # Size of virtual machines (e.g., Standard_DS2_v5)
+    type: string
+  - name: privateDNSName                # Private DNS name for the resources
+    type: string
+  - name: localadminName                # Local admin username for VMs
+    type: string
+  - name: localadminPassword            # Local admin password for VMs
+    type: string
+  - name: rbacObjectIdFullDesktopUsers  # RBAC Object ID for full desktop users
+    type: string
+  - name: rbacObjectIdRBACAVDAdmin      # RBAC Object ID for AVD Administrators
+    type: string
+  - name: rbacObjectIdRBACAVDUsers      # RBAC Object ID for AVD Users
+    type: string
+  - name: serviceConnection             # Service connection for Azure subscription
+    type: string
+  - name: templateFile                  # Path to the Bicep template file
+    type: string
+
+##### ---------------------- PARAMETERS END ---------------------- #####
+
+
+##### ---------------------- STAGES ---------------------- #####
+
+# Define stages of the pipeline
+  # Stages are used to organize jobs in the pipeline.
+  # Each stage can have one or more jobs that run in parallel or sequentially.
+  # Jobs contain steps that define the tasks to be executed.
+  # Stages can depend on other stages, ensuring that they run in the correct order.
+  
+stages:
+  # Lint stage for checking the Bicep template syntax
+  - stage: Lint
+    jobs:
+      - job: LintCode
+        steps:
+          - checkout: self # Check out the repository
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }} # Service connection for Azure subscription
+              scriptType: "pscore"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                az bicep build --file '${{ parameters.templateFile }}'
+
+  # Validate stage for validating the Bicep template
+  - stage: Validate
+    dependsOn: Lint
+    jobs:
+      - job: ValidateBicepTemplate
+        steps:
+          - checkout: self # Check out the repository
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }} # Service connection for Azure subscription
+              scriptType: "pscore"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                az deployment sub validate --location '${{ parameters.location }}' --template-file '${{ parameters.templateFile }}' --parameters gpar_environment='${{ parameters.environment }}' dpar_location='${{ parameters.location }}' dpar_locationAVD='${{ parameters.locationAVD }}' gpar_customerAbbreviation='${{ parameters.customerAbbreviation }}' gpar_tags='${{ convertToJson(parameters.tags) }}' dpar_networkId='${{ parameters.networkId }}' dpar_vdwsName='${{ parameters.vdwsName }}' dpar_fsshareQuota='${{ parameters.fsshareQuota }}' dpar_vmCount='${{ parameters.vmCount }}' dpar_vmSize='${{ parameters.vmSize }}' dpar_privateDNSName='${{ parameters.privateDNSName }}' dpar_vmlocaladminName='${{ parameters.localadminName }}' dpar_vmlocaladminPassword='${{ parameters.localadminPassword }}' dpar_rbacObjectIdFullDesktopUsers='${{ parameters.rbacObjectIdFullDesktopUsers }}' dpar_rbacObjectIdRBACAVDAdmin='${{ parameters.rbacObjectIdRBACAVDAdmin }}' dpar_rbacObjectIdRBACAVDUsers='${{ parameters.rbacObjectIdRBACAVDUsers }}'
+
+  # Preview stage for previewing the changes before deployment
+  - stage: Preview
+    dependsOn: Validate
+    jobs:
+      - job: Preview
+        steps:
+          - checkout: self # Check out the repository
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }} # Service connection for Azure subscription
+              scriptType: "pscore"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                az deployment sub what-if --location '${{ parameters.location }}' --template-file '${{ parameters.templateFile }}' --parameters gpar_environment='${{ parameters.environment }}' dpar_location='${{ parameters.location }}' dpar_locationAVD='${{ parameters.locationAVD }}' gpar_customerAbbreviation='${{ parameters.customerAbbreviation }}' gpar_tags='${{ convertToJson(parameters.tags) }}' dpar_networkId='${{ parameters.networkId }}' dpar_vdwsName='${{ parameters.vdwsName }}' dpar_fsshareQuota='${{ parameters.fsshareQuota }}' dpar_vmCount='${{ parameters.vmCount }}' dpar_vmSize='${{ parameters.vmSize }}' dpar_privateDNSName='${{ parameters.privateDNSName }}' dpar_vmlocaladminName='${{ parameters.localadminName }}' dpar_vmlocaladminPassword='${{ parameters.localadminPassword }}' dpar_rbacObjectIdFullDesktopUsers='${{ parameters.rbacObjectIdFullDesktopUsers }}' dpar_rbacObjectIdRBACAVDAdmin='${{ parameters.rbacObjectIdRBACAVDAdmin }}' dpar_rbacObjectIdRBACAVDUsers='${{ parameters.rbacObjectIdRBACAVDUsers }}'
+      - job: waitForValidation # Manual validation step
+        displayName: Wait for Preview validation
+        dependsOn: Preview 
+        pool: server
+        steps:
+          - task: ManualValidation@0
+            inputs:
+              instructions: "Please validate the Preview stage and resume"
+              onTimeout: "resume"
+
+  # Deploy stage for deploying the resources
+  - stage: Deploy
+    dependsOn: Preview
+    jobs:
+      - job: Deploy
+        steps:
+          - checkout: self # Check out the repository
+          - task: AzureCLI@2 
+            continueOnError: true # Continue on error to allow manual validation
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }} # Service connection for Azure subscription
+              scriptType: "pscore"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                az bicep install
+                az deployment sub create --location '${{ parameters.location }}' --template-file '${{ parameters.templateFile }}' --parameters gpar_environment='${{ parameters.environment }}' dpar_location='${{ parameters.location }}' dpar_locationAVD='${{ parameters.locationAVD }}' gpar_customerAbbreviation='${{ parameters.customerAbbreviation }}' gpar_tags='${{ convertToJson(parameters.tags) }}' dpar_networkId='${{ parameters.networkId }}' dpar_vdwsName='${{ parameters.vdwsName }}' dpar_fsshareQuota='${{ parameters.fsshareQuota }}' dpar_vmCount='${{ parameters.vmCount }}' dpar_vmSize='${{ parameters.vmSize }}' dpar_privateDNSName='${{ parameters.privateDNSName }}' dpar_vmlocaladminName='${{ parameters.localadminName }}' dpar_vmlocaladminPassword='${{ parameters.localadminPassword }}' dpar_rbacObjectIdFullDesktopUsers='${{ parameters.rbacObjectIdFullDesktopUsers }}' dpar_rbacObjectIdRBACAVDAdmin='${{ parameters.rbacObjectIdRBACAVDAdmin }}' dpar_rbacObjectIdRBACAVDUsers='${{ parameters.rbacObjectIdRBACAVDUsers }}'
+
+##### ---------------------- STAGES END ---------------------- #####
