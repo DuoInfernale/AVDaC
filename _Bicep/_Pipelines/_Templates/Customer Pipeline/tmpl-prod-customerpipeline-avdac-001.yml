@@ -1,0 +1,34 @@
+##### ---------------------- HEADER ---------------------- #####
+
+# Customer Azure DevOps Pipeline for Deploying Resources (Starter)
+# This pipeline is intentionally minimal: it includes the main deployment template.
+# The actual deployment uses the parameter file at _Bicep/_Templates/main.bicepparam.
+#
+# Authors: Michele Blum & Flavio Meyer
+# Creation date: 30.05.2026
+#
+##### ---------------------- HEADER END ---------------------- #####
+
+trigger: none
+pr: none
+
+pool:
+  vmImage: "ubuntu-latest"
+
+# Minimal variables: you can set serviceConnection in pipeline UI or via a variable group.
+variables:
+  serviceConnection: 'AzureServiceConnection'   # <--- change to your service connection name if desired
+  templateFile: '_Bicep/_Bicep_Templates/main.bicep'   # repo path to main bicep
+  paramFilePath: 'BicepparamFile'  # <--- change to your bicepparam-file path (relative to repo root)
+
+##### ---------------------- STAGES ---------------------- #####
+
+# Include the main pipeline template. No runtime parameters requested from the user.
+stages:
+  - template: /_Bicep\_Pipelines\_Templates\AVD\Full landing zone\Entra ID authentication only\tmpl-prod-mainpipeline-avdac-001.yml
+    parameters:
+      serviceConnection: ${{ variables.serviceConnection }}
+      templateFile: ${{ variables.templateFile }}
+      paramFilePath: ${{ variables.paramFilePath }}
+
+##### ---------------------- STAGES END ---------------------- #####

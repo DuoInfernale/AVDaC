@@ -1,0 +1,111 @@
+##### ---------------------- HEADER ---------------------- #####
+
+# Azure DevOps Pipeline template for deploying Azure resources with Bicep.
+# This template uses a single Bicep parameter file (main.bicepparam) for all deployment parameters.
+# Stages: Lint -> Validate -> Preview -> Deploy
+#
+# Authors: Michele Blum & Flavio Meyer
+# Created: 30.04.2026
+#
+##### ---------------------- HEADER END ---------------------- #####
+
+parameters:
+  # Azure service connection to use for deployments (set a default or override in pipeline variables)
+  - name: serviceConnection
+    type: string
+
+  # Path to the Bicep template file in the repository
+  - name: templateFile
+    type: string
+
+  # Path to the parameter file (Bicep params file) in the repository
+  - name: paramFilePath
+    type: string
+
+  # Location used for subscription-level deployments (can be overridden in param file; CLI still needs an explicit location arg)
+  - name: location
+    type: string
+    default: 'Switzerland North'
+
+##### ---------------------- STAGES ---------------------- #####
+
+stages:
+
+  # Lint stage: compile the Bicep template (no parameters required)
+  - stage: Lint
+    jobs:
+      - job: LintCode
+        displayName: Lint Bicep
+        steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: 'Build Bicep (lint)'
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az bicep build --file '${{ parameters.templateFile }}'
+
+  # Validate stage: validate using the single parameter file
+  - stage: Validate
+    dependsOn: Lint
+    jobs:
+      - job: ValidateBicepTemplate
+        displayName: Validate
+        steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: 'Validate deployment (subscription scope)'
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az deployment sub validate --location '${{ parameters.location }}' --template-file '${{ parameters.templateFile }}' --parameters '${{ parameters.paramFilePath }}'
+
+  # Preview stage: what-if using the single parameter file
+  - stage: Preview
+    dependsOn: Validate
+    jobs:
+      - job: Preview
+        displayName: Preview (What-If)
+        steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: 'What-If (subscription scope)'
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az deployment sub what-if --location '${{ parameters.location }}' --template-file '${{ parameters.templateFile }}' --parameters '${{ parameters.paramFilePath }}'
+
+      - job: waitForValidation
+        displayName: Wait for Preview validation
+        dependsOn: Preview
+        pool: server
+        steps:
+          - task: ManualValidation@0
+            inputs:
+              instructions: 'Please review the What-If output and resume to proceed with deployment'
+              onTimeout: 'resume'
+
+  # Deploy stage: run deployment using the single parameter file
+  - stage: Deploy
+    dependsOn: Preview
+    jobs:
+      - job: Deploy
+        displayName: Deploy
+        steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: 'Deploy (subscription scope)'
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az deployment sub create --location '${{ parameters.location }}' --template-file '${{ parameters.templateFile }}' --parameters '${{ parameters.paramFilePath }}'
+
+##### ---------------------- STAGES END ---------------------- #####
