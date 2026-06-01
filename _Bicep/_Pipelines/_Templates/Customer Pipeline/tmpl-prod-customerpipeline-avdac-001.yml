@@ -17,9 +17,9 @@ pool:
 
 # Minimal variables: you can set serviceConnection in pipeline UI or via a variable group.
 variables:
-  serviceConnection: 'duo-sc-devops-bicep-avdac-dev-002'   # <--- change to your service connection name if desired
+  serviceConnection: 'AzureServiceConnection'   # <--- change to your service connection name if desired
   templateFile: '_Bicep/_Bicep_Templates/main.bicep'   # repo path to main bicep
-  paramFilePath: 'Customers/Duo Infernale/main.bicepparam'  # <--- change to your bicepparam-file path (relative to repo root)
+  paramFilePath: 'BicepparamFile'  # <--- change to your bicepparam-file path (relative to repo root)
 
 ##### ---------------------- STAGES ---------------------- #####
 

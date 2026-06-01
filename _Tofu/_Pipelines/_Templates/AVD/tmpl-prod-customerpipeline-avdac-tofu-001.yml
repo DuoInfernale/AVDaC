@@ -1,0 +1,363 @@
+##### ---------------------- HEADER ---------------------- #####
+
+# Reusable OpenTofu deployment template (customer-driven tfvars + backend config)
+# Authors: Michele Blum & Flavio Meyer
+# Updated: 31.05.2026
+
+##### ---------------------- HEADER END ---------------------- #####
+
+parameters:
+  - name: serviceConnection
+    type: string
+  - name: tofuWorkingDir
+    type: string
+    default: '_Tofu'
+  - name: tfvarsFile
+    type: string
+  - name: providersFile
+    type: string
+  - name: operation
+    type: string
+    default: 'deploy'
+    values:
+      - deploy
+      - destroy
+  - name: approvalNotifyUsers
+    type: string
+    default: ''
+  - name: approvalInstructions
+    type: string
+    default: 'Review the OpenTofu plan output and approve to continue.'
+  - name: manualApprovalTimeoutMinutes
+    type: number
+    default: 1440
+  - name: tofuVersion
+    type: string
+    default: '1.12.1'
+
+stages:
+  - stage: Validate
+    displayName: 'Validate'
+    condition: eq('${{ parameters.operation }}', 'deploy')
+    jobs:
+      - job: Validate
+        displayName: 'OpenTofu Validate'
+        pool:
+          vmImage: 'ubuntu-latest'
+
+        steps:
+          - checkout: self
+
+          - bash: |
+              set -euo pipefail
+              TOFU_VERSION="${{ parameters.tofuVersion }}"
+              curl -fsSL -o /tmp/tofu.zip "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip"
+              unzip -o /tmp/tofu.zip -d /tmp/tofu-bin
+              sudo install /tmp/tofu-bin/tofu /usr/local/bin/tofu
+              tofu version
+            displayName: 'Install OpenTofu'
+
+          - task: AzureCLI@2
+            displayName: 'OpenTofu Init + Validate'
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              useGlobalConfig: false
+              workingDirectory: ${{ parameters.tofuWorkingDir }}
+              inlineScript: |
+                set -euo pipefail
+
+                echo "Validating customer input files..."
+                test -f "$(Build.SourcesDirectory)/${{ parameters.tfvarsFile }}"
+                test -f "$(Build.SourcesDirectory)/${{ parameters.providersFile }}"
+
+                echo "Azure login context via service connection"
+                az account show --output table
+
+                # Force azurerm provider/backend to use pipeline Service Connection OIDC/SPN auth,
+                # not Azure CLI user auth.
+                export ARM_USE_OIDC=true
+                export ARM_USE_AZUREAD=true
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                if [ -n "${idToken:-}" ]; then
+                  export ARM_OIDC_TOKEN="$idToken"
+                fi
+
+                TFVARS_FILE="$(Build.SourcesDirectory)/${{ parameters.tfvarsFile }}"
+                cp "$(Build.SourcesDirectory)/${{ parameters.providersFile }}" backend.tf
+
+                echo "OpenTofu init with customer backend configuration"
+                tofu init -input=false
+
+                echo "OpenTofu validate"
+                tofu validate
+
+  - stage: Plan
+    displayName: 'Plan'
+    dependsOn: Validate
+    condition: and(succeeded(), eq('${{ parameters.operation }}', 'deploy'))
+    jobs:
+      - job: Plan
+        displayName: 'OpenTofu Plan'
+        pool:
+          vmImage: 'ubuntu-latest'
+
+        steps:
+          - checkout: self
+
+          - bash: |
+              set -euo pipefail
+              TOFU_VERSION="${{ parameters.tofuVersion }}"
+              curl -fsSL -o /tmp/tofu.zip "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip"
+              unzip -o /tmp/tofu.zip -d /tmp/tofu-bin
+              sudo install /tmp/tofu-bin/tofu /usr/local/bin/tofu
+              tofu version
+            displayName: 'Install OpenTofu'
+
+          - task: AzureCLI@2
+            displayName: 'OpenTofu Init + Plan'
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              useGlobalConfig: false
+              workingDirectory: ${{ parameters.tofuWorkingDir }}
+              inlineScript: |
+                set -euo pipefail
+
+                echo "Validating customer input file..."
+                test -f "$(Build.SourcesDirectory)/${{ parameters.tfvarsFile }}"
+                test -f "$(Build.SourcesDirectory)/${{ parameters.providersFile }}"
+
+                export ARM_USE_OIDC=true
+                export ARM_USE_AZUREAD=true
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                if [ -n "${idToken:-}" ]; then
+                  export ARM_OIDC_TOKEN="$idToken"
+                fi
+
+                TFVARS_FILE="$(Build.SourcesDirectory)/${{ parameters.tfvarsFile }}"
+                cp "$(Build.SourcesDirectory)/${{ parameters.providersFile }}" backend.tf
+
+                tofu init -input=false
+                tofu plan -input=false -var-file="$TFVARS_FILE" -out="$(Build.ArtifactStagingDirectory)/tfplan"
+
+          - publish: '$(Build.ArtifactStagingDirectory)/tfplan'
+            artifact: tfplan
+            displayName: 'Publish tfplan artifact'
+
+  - stage: ApproveApply
+    displayName: 'Approve Apply'
+    dependsOn: Plan
+    condition: and(succeeded(), eq('${{ parameters.operation }}', 'deploy'))
+    jobs:
+      - job: ApproveApply
+        displayName: 'Manual Approval - Apply'
+        pool: server
+        timeoutInMinutes: 4320
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Approve OpenTofu Apply'
+            timeoutInMinutes: ${{ parameters.manualApprovalTimeoutMinutes }}
+            inputs:
+              notifyUsers: ${{ parameters.approvalNotifyUsers }}
+              instructions: ${{ parameters.approvalInstructions }}
+              onTimeout: 'reject'
+
+  - stage: Apply
+    displayName: 'Apply'
+    dependsOn: ApproveApply
+    condition: and(succeeded(), eq('${{ parameters.operation }}', 'deploy'))
+    jobs:
+      - job: Apply
+        displayName: 'OpenTofu Apply'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+
+          - download: current
+            artifact: tfplan
+            displayName: 'Download tfplan artifact'
+
+          - bash: |
+              set -euo pipefail
+              TOFU_VERSION="${{ parameters.tofuVersion }}"
+              curl -fsSL -o /tmp/tofu.zip "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip"
+              unzip -o /tmp/tofu.zip -d /tmp/tofu-bin
+              sudo install /tmp/tofu-bin/tofu /usr/local/bin/tofu
+              tofu version
+            displayName: 'Install OpenTofu'
+
+          - task: AzureCLI@2
+            displayName: 'OpenTofu Init + Apply'
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              useGlobalConfig: false
+              workingDirectory: ${{ parameters.tofuWorkingDir }}
+              inlineScript: |
+                set -euo pipefail
+
+                echo "Validating customer input file..."
+                test -f "$(Build.SourcesDirectory)/${{ parameters.tfvarsFile }}"
+                test -f "$(Build.SourcesDirectory)/${{ parameters.providersFile }}"
+
+                export ARM_USE_OIDC=true
+                export ARM_USE_AZUREAD=true
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                if [ -n "${idToken:-}" ]; then
+                  export ARM_OIDC_TOKEN="$idToken"
+                fi
+
+                TFVARS_FILE="$(Build.SourcesDirectory)/${{ parameters.tfvarsFile }}"
+                PLAN_FILE="$(Pipeline.Workspace)/tfplan/tfplan"
+                test -f "$PLAN_FILE"
+                cp "$(Build.SourcesDirectory)/${{ parameters.providersFile }}" backend.tf
+
+                tofu init -input=false
+                tofu apply -input=false -auto-approve "$PLAN_FILE"
+
+  - stage: DestroyPlan
+    displayName: 'Destroy Plan'
+    dependsOn: []
+    condition: eq('${{ parameters.operation }}', 'destroy')
+    jobs:
+      - job: DestroyPlan
+        displayName: 'OpenTofu Destroy Plan'
+        pool:
+          vmImage: 'ubuntu-latest'
+
+        steps:
+          - checkout: self
+
+          - bash: |
+              set -euo pipefail
+              TOFU_VERSION="${{ parameters.tofuVersion }}"
+              curl -fsSL -o /tmp/tofu.zip "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip"
+              unzip -o /tmp/tofu.zip -d /tmp/tofu-bin
+              sudo install /tmp/tofu-bin/tofu /usr/local/bin/tofu
+              tofu version
+            displayName: 'Install OpenTofu'
+
+          - task: AzureCLI@2
+            displayName: 'OpenTofu Init + Destroy Plan'
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              useGlobalConfig: false
+              workingDirectory: ${{ parameters.tofuWorkingDir }}
+              inlineScript: |
+                set -euo pipefail
+
+                echo "Validating customer input file..."
+                test -f "$(Build.SourcesDirectory)/${{ parameters.tfvarsFile }}"
+                test -f "$(Build.SourcesDirectory)/${{ parameters.providersFile }}"
+
+                export ARM_USE_OIDC=true
+                export ARM_USE_AZUREAD=true
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                if [ -n "${idToken:-}" ]; then
+                  export ARM_OIDC_TOKEN="$idToken"
+                fi
+
+                TFVARS_FILE="$(Build.SourcesDirectory)/${{ parameters.tfvarsFile }}"
+                cp "$(Build.SourcesDirectory)/${{ parameters.providersFile }}" backend.tf
+
+                tofu init -input=false
+                tofu plan -destroy -input=false -var-file="$TFVARS_FILE" -out="$(Build.ArtifactStagingDirectory)/tfdestroyplan"
+
+          - publish: '$(Build.ArtifactStagingDirectory)/tfdestroyplan'
+            artifact: tfdestroyplan
+            displayName: 'Publish tfdestroyplan artifact'
+
+  - stage: ApproveDestroy
+    displayName: 'Approve Destroy'
+    dependsOn: DestroyPlan
+    condition: and(succeeded(), eq('${{ parameters.operation }}', 'destroy'))
+    jobs:
+      - job: ApproveDestroy
+        displayName: 'Manual Approval - Destroy'
+        pool: server
+        timeoutInMinutes: 4320
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Approve OpenTofu Destroy'
+            timeoutInMinutes: ${{ parameters.manualApprovalTimeoutMinutes }}
+            inputs:
+              notifyUsers: ${{ parameters.approvalNotifyUsers }}
+              instructions: 'Review carefully. This will destroy OpenTofu-managed infrastructure for this customer.'
+              onTimeout: 'reject'
+
+  - stage: Destroy
+    displayName: 'Destroy'
+    dependsOn: ApproveDestroy
+    condition: and(succeeded(), eq('${{ parameters.operation }}', 'destroy'))
+    jobs:
+      - job: Destroy
+        displayName: 'OpenTofu Destroy'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+
+          - download: current
+            artifact: tfdestroyplan
+            displayName: 'Download tfdestroyplan artifact'
+
+          - bash: |
+              set -euo pipefail
+              TOFU_VERSION="${{ parameters.tofuVersion }}"
+              curl -fsSL -o /tmp/tofu.zip "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip"
+              unzip -o /tmp/tofu.zip -d /tmp/tofu-bin
+              sudo install /tmp/tofu-bin/tofu /usr/local/bin/tofu
+              tofu version
+            displayName: 'Install OpenTofu'
+
+          - task: AzureCLI@2
+            displayName: 'OpenTofu Init + Destroy'
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              useGlobalConfig: false
+              workingDirectory: ${{ parameters.tofuWorkingDir }}
+              inlineScript: |
+                set -euo pipefail
+
+                echo "Validating customer input file..."
+                test -f "$(Build.SourcesDirectory)/${{ parameters.tfvarsFile }}"
+                test -f "$(Build.SourcesDirectory)/${{ parameters.providersFile }}"
+
+                export ARM_USE_OIDC=true
+                export ARM_USE_AZUREAD=true
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                if [ -n "${idToken:-}" ]; then
+                  export ARM_OIDC_TOKEN="$idToken"
+                fi
+
+                TFVARS_FILE="$(Build.SourcesDirectory)/${{ parameters.tfvarsFile }}"
+                DESTROY_PLAN_FILE="$(Pipeline.Workspace)/tfdestroyplan/tfdestroyplan"
+                test -f "$DESTROY_PLAN_FILE"
+                cp "$(Build.SourcesDirectory)/${{ parameters.providersFile }}" backend.tf
+
+                tofu init -input=false
+                tofu apply -input=false -auto-approve "$DESTROY_PLAN_FILE"
