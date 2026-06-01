@@ -25,4 +25,4 @@ If you encounter any issues or have questions about the project, please contact 
 
 ## License
 
-This project is licensed under the [MIT License](https://github.com/DuoInfernale/AVDaC/blob/main/LICENSE).
+This project is licensed under the [MIT License](LICENSE).
