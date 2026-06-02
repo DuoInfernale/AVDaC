@@ -208,7 +208,7 @@ resource "azurerm_monitor_diagnostic_setting" "avd-host_pools-diagnostic" {
 resource "azurerm_virtual_desktop_application_group" "avd-application_groups" {
   for_each = { for ag in var.avd-application_groups : ag.name => ag }
 
-  name                         = "${var.customer_abbreviation}-vdag-${var.environment}-prod-${var.location_avd}-${each.key}"
+  name                         = "${var.customer_abbreviation}-vdag-${var.environment}-${var.location_avd}-${each.key}"
   friendly_name                = lookup(each.value, "friendly_name", null)
   description                  = lookup(each.value, "description", null)
   default_desktop_display_name = lookup(each.value, "default_desktop_display_name", null)
