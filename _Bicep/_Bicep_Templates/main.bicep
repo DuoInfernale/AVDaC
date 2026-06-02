@@ -162,13 +162,13 @@ var var_rgNetworkName = '${gpar_customerAbbreviation}-rg-network-${gpar_environm
 ///// ---------------------- NETWORKING VARIABLES (SPOKE ONLY) ---------------------- ////
 
 // Spoke virtual network name.
-var var_vnetNameSpokeAVD = '${gpar_customerAbbreviation}-vnet-spoke-avd-${gpar_environment != '' ? gpar_environment : 'prod'}-${var_locationAVD}-001'
+var var_vnetNameSpokeAVD = '${gpar_customerAbbreviation}-vnet-spoke-avd-${gpar_environment != '' ? gpar_environment : 'prod'}-${dpar_location}-001'
 
 // Private DNS link name used when linking private DNS zone to the spoke VNet.
 var var_privateDNSLinkName = '${gpar_customerAbbreviation}-pl-${var_vnetNameSpokeAVD}'
 
 // Default NSG name for the spoke resources (can be used by the subnet module).
-var var_nsgDefaultName = '${gpar_customerAbbreviation}-nsg-default-${gpar_environment != '' ? gpar_environment : 'prod'}-${var_locationAVD}-001'
+var var_nsgDefaultName = '${gpar_customerAbbreviation}-nsg-default-${gpar_environment != '' ? gpar_environment : 'prod'}-${dpar_location}-001'
 
 ///// ---------------------- NETWORKING VARIABLES END ---------------------- ////
 ///// ---------------------- STORAGE VARIABLES ---------------------- ////
